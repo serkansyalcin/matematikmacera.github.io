@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Matematik Galaksisi",
+  "description": "İlkokul öğrencileri için eğlenceli, interaktif ve AI destekli bir matematik öğrenme macerası.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
