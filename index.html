@@ -1,80 +1,352 @@
-
 <!DOCTYPE html>
 <html lang="tr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Matematik Galaksisi</title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matematik Galaksisi: Kozmik Macera</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-      :root {
-        --cosmic-bg: #0f172a;
-      }
-      body {
-        font-family: 'Fredoka', sans-serif;
-        background-color: var(--cosmic-bg);
-        color: #f8fafc;
-        overflow-x: hidden;
-        margin: 0;
-      }
-      .math-gradient {
-        background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
-      }
-      .glass {
-        background: rgba(30, 41, 59, 0.7);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-      }
-      .star-field {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        z-index: -1;
-        background: url('https://www.transparenttextures.com/patterns/stardust.png');
-        opacity: 0.3;
-      }
-      @keyframes float {
-        0%, 100% { transform: translateY(0px) rotate(0deg); }
-        50% { transform: translateY(-15px) rotate(2deg); }
-      }
-      .animate-float {
-        animation: float 4s ease-in-out infinite;
-      }
-      .planet-glow {
-        box-shadow: 0 0 40px rgba(99, 102, 241, 0.4);
-      }
-      .planet-glow-active {
-        box-shadow: 0 0 60px rgba(250, 204, 21, 0.6);
-      }
-      ::-webkit-scrollbar {
-        width: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #0f172a;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #334155;
-        border-radius: 10px;
-      }
+        body {
+            font-family: 'Fredoka', sans-serif;
+            background-color: #020617;
+            color: #f8fafc;
+            margin: 0;
+            overflow-x: hidden;
+        }
+        .cosmic-bg {
+            background: radial-gradient(circle at center, #1e1b4b 0%, #020617 100%);
+            min-height: 100vh;
+        }
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            opacity: 0.5;
+            animation: twinkle var(--duration) infinite ease-in-out;
+        }
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
+        .planet-glow {
+            box-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .planet-glow:hover:not(:disabled) {
+            transform: scale(1.1);
+            box-shadow: 0 0 50px rgba(139, 92, 246, 0.5);
+        }
+        .animate-float {
+            animation: float 4s ease-in-out infinite;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+        }
+        .glass {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        ::-webkit-scrollbar { width: 0px; }
     </style>
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@^19.2.4",
-        "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-        "react/": "https://esm.sh/react@^19.2.4/",
-        "@google/genai": "https://esm.sh/@google/genai@^1.39.0"
-      }
-    }
-    </script>
-  <link rel="stylesheet" href="/index.css">
 </head>
-  <body>
-    <div class="star-field"></div>
-    <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
+<body class="cosmic-bg">
+    <div id="stars-container" class="fixed inset-0 pointer-events-none"></div>
+
+    <!-- UI Root -->
+    <div id="app" class="relative z-10 min-h-screen flex flex-col"></div>
+
+    <script type="module">
+        // --- YAPILANDIRMA VE DURUM ---
+        const apiKey = ""; // Sistem tarafından otomatik doldurulacak
+        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
+        
+        let state = {
+            score: 0,
+            currentLevel: 1,
+            difficulty: 'easy',
+            status: 'map', // 'map', 'quest', 'loading', 'finished'
+            activeMission: null,
+            questData: null,
+            feedback: null,
+            missions: [
+                { id: 1, type: 'riddle', title: 'İlk Kapı', completed: false, icon: '🧩' },
+                { id: 2, type: 'story', title: 'Ay Üssü', completed: false, icon: '🌙' },
+                { id: 3, type: 'riddle', title: 'Sayı Gezegeni', completed: false, icon: '🪐' },
+                { id: 4, type: 'story', title: 'Mars Keşfi', completed: false, icon: '🚀' },
+                { id: 5, type: 'boss', title: 'Yıldız Kapısı', completed: false, icon: '👑' }
+            ]
+        };
+
+        // --- GEMINI API SERVİSİ (Exponential Backoff ile) ---
+        async function fetchWithRetry(prompt, retries = 5, delay = 1000) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
+            
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            question: { type: "STRING" },
+                            options: { type: "ARRAY", items: { type: "STRING" } },
+                            answer: { type: "STRING" },
+                            explanation: { type: "STRING" }
+                        },
+                        required: ["question", "options", "answer"]
+                    }
+                }
+            };
+
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) throw new Error('API Hatası');
+                    const data = await response.json();
+                    return JSON.parse(data.candidates[0].content.parts[0].text);
+                } catch (err) {
+                    if (i === retries - 1) throw err;
+                    await new Promise(r => setTimeout(r, delay));
+                    delay *= 2;
+                }
+            }
+        }
+
+        // --- OYUN MANTIĞI ---
+        window.selectMission = async (id) => {
+            const mission = state.missions.find(m => m.id === id);
+            if (!mission || mission.id > state.currentLevel) return;
+
+            state.activeMission = mission;
+            state.status = 'loading';
+            render();
+
+            const difficultyText = state.difficulty === 'easy' ? '1. sınıf' : state.difficulty === 'medium' ? '2-3. sınıf' : '4. sınıf';
+            const prompt = `Sen bir matematik öğretmenisin. ${difficultyText} seviyesindeki bir öğrenci için ${mission.type === 'riddle' ? 'eğlenceli bir matematik bilmecesi' : 'uzay temalı bir matematik hikaye problemi'} oluştur. 
+            JSON formatında cevap ver. 4 şık olsun. Cevap 'answer' alanında şıkkın kendisi (metin) olarak yer alsın.`;
+
+            try {
+                state.questData = await fetchWithRetry(prompt);
+                state.status = 'quest';
+            } catch (err) {
+                state.feedback = "Bağlantı hatası! Lütfen tekrar dene.";
+                state.status = 'map';
+            }
+            render();
+        };
+
+        window.checkAnswer = (selected) => {
+            const isCorrect = selected.toString().trim() === state.questData.answer.toString().trim();
+
+            if (isCorrect) {
+                state.feedback = { type: 'success', text: "HARİKA! DOĞRU CEVAP 🚀" };
+                render();
+                setTimeout(() => {
+                    const m = state.missions.find(mi => mi.id === state.activeMission.id);
+                    m.completed = true;
+                    state.score += 100;
+                    
+                    if (state.activeMission.id === state.missions.length) {
+                        state.status = 'finished';
+                    } else {
+                        state.currentLevel = Math.max(state.currentLevel, state.activeMission.id + 1);
+                        state.status = 'map';
+                    }
+                    state.feedback = null;
+                    render();
+                }, 1500);
+            } else {
+                state.feedback = { type: 'error', text: "Hımm, bir daha düşün astronot! 🛸" };
+                render();
+                setTimeout(() => { state.feedback = null; render(); }, 2000);
+            }
+        };
+
+        window.setDifficulty = (d) => {
+            state.difficulty = d;
+            render();
+        };
+
+        window.restartGame = () => location.reload();
+
+        // --- RENDER BİLEŞENLERİ ---
+        function renderHUD() {
+            return `
+                <header class="sticky top-0 z-40 glass border-b border-white/10 px-6 py-4 flex justify-between items-center shadow-2xl">
+                    <div class="flex items-center space-x-8">
+                        <div>
+                            <span class="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-1">PUAN</span>
+                            <span class="text-2xl font-black text-white">⭐ ${state.score}</span>
+                        </div>
+                        <div class="h-8 w-px bg-slate-700"></div>
+                        <div>
+                            <span class="text-[10px] font-black text-pink-400 uppercase tracking-widest block mb-1">SEVİYE</span>
+                            <span class="text-xl font-black text-white">${state.currentLevel} / ${state.missions.length}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <select onchange="setDifficulty(this.value)" class="bg-slate-800 border border-slate-700 text-white text-xs font-bold px-4 py-2 rounded-xl outline-none cursor-pointer">
+                            <option value="easy" ${state.difficulty === 'easy' ? 'selected' : ''}>1. Sınıf</option>
+                            <option value="medium" ${state.difficulty === 'medium' ? 'selected' : ''}>2-3. Sınıf</option>
+                            <option value="hard" ${state.difficulty === 'hard' ? 'selected' : ''}>4. Sınıf</option>
+                        </select>
+                    </div>
+                </header>
+            `;
+        }
+
+        function renderMap() {
+            const missionsHtml = state.missions.map((m, i) => {
+                const isLocked = m.id > state.currentLevel;
+                const isCurrent = m.id === state.currentLevel;
+                const isCompleted = m.completed;
+                const offset = Math.sin(i * 1.2) * 60;
+
+                return `
+                    <div class="flex justify-center mb-20 relative" style="transform: translateX(${offset}px)">
+                        <div class="relative group">
+                            <button 
+                                onclick="selectMission(${m.id})"
+                                ${isLocked ? 'disabled' : ''}
+                                class="w-24 h-24 rounded-full flex items-center justify-center text-4xl planet-glow transition-all
+                                ${isLocked ? 'bg-slate-800 opacity-40 grayscale' : 'bg-gradient-to-br from-indigo-500 to-purple-700 border-4 border-white/20'}
+                                ${isCurrent ? 'from-yellow-400 to-orange-500 border-white ring-4 ring-yellow-400/50 animate-pulse' : ''}
+                                ${isCompleted ? 'from-green-400 to-emerald-600' : ''}
+                            ">
+                                ${isCompleted ? '✅' : m.icon}
+                            </button>
+                            <div class="absolute top-full mt-3 left-1/2 -translate-x-1/2 whitespace-nowrap text-center">
+                                <span class="text-sm font-bold ${isCurrent ? 'text-yellow-400' : 'text-slate-400'}">${m.title}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <main class="flex-1 py-16 px-4 max-w-2xl mx-auto w-full">
+                    <div class="text-center mb-20">
+                        <h1 class="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-indigo-300 italic tracking-tighter drop-shadow-lg">MATEMATİK GALAKSİSİ</h1>
+                        <p class="text-indigo-400 font-bold tracking-[0.4em] text-xs mt-2 uppercase">Bilmeceleri Çöz • Evreni Kurtar</p>
+                    </div>
+                    <div class="relative">
+                        <div class="absolute inset-0 flex justify-center pointer-events-none">
+                            <div class="w-1 h-full border-l-2 border-dashed border-white/10"></div>
+                        </div>
+                        ${missionsHtml}
+                    </div>
+                </main>
+            `;
+        }
+
+        function renderQuest() {
+            if (state.status === 'loading') {
+                return `
+                    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-xl">
+                        <div class="text-center space-y-6">
+                            <div class="w-24 h-24 border-8 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto shadow-2xl"></div>
+                            <p class="text-2xl font-black tracking-widest text-indigo-300 animate-pulse">KOZMİK VERİLER ALINIYOR...</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (state.status !== 'quest' || !state.questData) return '';
+
+            return `
+                <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+                    <div class="glass max-w-lg w-full p-8 rounded-[3rem] shadow-[0_0_100px_rgba(99,102,241,0.2)] animate-float">
+                        <div class="flex justify-between items-start mb-8">
+                            <div class="flex items-center space-x-4">
+                                <span class="text-5xl">${state.activeMission.icon}</span>
+                                <div>
+                                    <h2 class="text-2xl font-black text-white">${state.activeMission.title}</h2>
+                                    <p class="text-indigo-400 text-xs font-bold uppercase tracking-widest">Gezegen Görevi</p>
+                                </div>
+                            </div>
+                            <button onclick="state.status='map'; render();" class="text-slate-500 hover:text-white transition-colors text-2xl">✕</button>
+                        </div>
+
+                        <div class="bg-indigo-900/30 p-8 rounded-3xl border border-indigo-500/20 mb-8">
+                            <p class="text-xl font-medium text-indigo-500 mb-4 text-center">SORU:</p>
+                            <p class="text-2xl font-bold text-white leading-relaxed text-center italic">
+                                "${state.questData.question}"
+                            </p>
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-3 mb-8">
+                            ${state.questData.options.map(opt => `
+                                <button onclick="checkAnswer('${opt}')" class="p-5 bg-slate-800/50 hover:bg-indigo-600 border border-slate-700 rounded-2xl text-lg font-bold transition-all hover:scale-[1.02] active:scale-95 text-left flex items-center">
+                                    <span class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center mr-4 text-xs">🚀</span>
+                                    ${opt}
+                                </button>
+                            `).join('')}
+                        </div>
+
+                        ${state.feedback ? `
+                            <div class="p-5 rounded-2xl text-center font-black text-lg animate-bounce ${state.feedback.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-pink-500/20 text-pink-400'}">
+                                ${state.feedback.text}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderFinished() {
+            return `
+                <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 backdrop-blur-2xl p-6">
+                    <div class="text-center space-y-10 animate-float max-w-md w-full">
+                        <div class="text-9xl drop-shadow-[0_0_50px_rgba(250,204,21,0.5)]">🏆</div>
+                        <h2 class="text-6xl font-black text-white tracking-tighter leading-tight">GALAKSİ KRALI!</h2>
+                        <div class="glass p-10 rounded-[3.5rem] border-2 border-yellow-400/30">
+                            <p class="text-indigo-400 font-bold uppercase tracking-widest text-sm mb-2">TOPLAM PUAN</p>
+                            <p class="text-8xl font-black text-yellow-400">⭐ ${state.score}</p>
+                        </div>
+                        <button onclick="restartGame()" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-6 px-12 rounded-3xl text-3xl font-black shadow-2xl transition-all hover:brightness-110 active:scale-95">
+                            YENİDEN BAŞLA 🛸
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function render() {
+            const root = document.getElementById('app');
+            if (state.status === 'finished') {
+                root.innerHTML = renderFinished();
+            } else {
+                root.innerHTML = renderHUD() + renderMap() + renderQuest();
+            }
+        }
+
+        // --- BAŞLATMA VE YILDIZLAR ---
+        function initStars() {
+            const container = document.getElementById('stars-container');
+            for (let i = 0; i < 150; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                const size = Math.random() * 3 + 'px';
+                star.style.width = size;
+                star.style.height = size;
+                star.style.top = Math.random() * 100 + '%';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.setProperty('--duration', (Math.random() * 3 + 2) + 's');
+                container.appendChild(star);
+            }
+        }
+
+        window.onload = () => {
+            initStars();
+            render();
+        };
+    </script>
 </body>
 </html>
