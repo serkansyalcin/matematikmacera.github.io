@@ -60,14 +60,15 @@
 
     <script type="module">
         // --- YAPILANDIRMA VE DURUM ---
-        const apiKey = ""; // Sistem tarafından otomatik doldurulacak
+        // NOT: API Key boşsa 403 hatası alırsınız. Yerelde deniyorsanız burayı doldurun.
+        const apiKey = "AIzaSyBrHGoP9iAWmjdikzMh9t4xkCHPXHFSfSE"; 
         const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
         
         let state = {
             score: 0,
             currentLevel: 1,
             difficulty: 'easy',
-            status: 'map', // 'map', 'quest', 'loading', 'finished'
+            status: 'map', 
             activeMission: null,
             questData: null,
             feedback: null,
@@ -80,12 +81,19 @@
             ]
         };
 
-        // --- GEMINI API SERVİSİ (Exponential Backoff ile) ---
-        async function fetchWithRetry(prompt, retries = 5, delay = 1000) {
+        // --- GEMINI API SERVİSİ ---
+        async function fetchWithRetry(userQuery, retries = 5, delay = 1000) {
+            if (!apiKey) {
+                console.warn("API Anahtarı bulunamadı. Yerel kullanımda apiKey değişkenini doldurmalısınız.");
+            }
+
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
             
+            const systemPrompt = `Sen bir ilkokul matematik öğretmenisin. Kullanıcının belirttiği zorluk seviyesine (1. sınıf, 2-3. sınıf, 4. sınıf) uygun, eğlenceli ve uzay temalı bir soru üretmelisin. JSON formatında cevap ver.`;
+            
             const payload = {
-                contents: [{ parts: [{ text: prompt }] }],
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
                 generationConfig: {
                     responseMimeType: "application/json",
                     responseSchema: {
@@ -108,11 +116,17 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-                    if (!response.ok) throw new Error('API Hatası');
+                    
+                    if (response.status === 403) throw new Error("API Anahtarı Hatası (403 Forbidden). Anahtarı kontrol edin!");
+                    if (!response.ok) throw new Error(`Sunucu Hatası: ${response.status}`);
+                    
                     const data = await response.json();
+                    if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                        throw new Error("API'den geçersiz yanıt geldi.");
+                    }
                     return JSON.parse(data.candidates[0].content.parts[0].text);
                 } catch (err) {
-                    if (i === retries - 1) throw err;
+                    if (i === retries - 1 || err.message.includes("403")) throw err;
                     await new Promise(r => setTimeout(r, delay));
                     delay *= 2;
                 }
@@ -126,18 +140,22 @@
 
             state.activeMission = mission;
             state.status = 'loading';
+            state.feedback = null;
             render();
 
             const difficultyText = state.difficulty === 'easy' ? '1. sınıf' : state.difficulty === 'medium' ? '2-3. sınıf' : '4. sınıf';
-            const prompt = `Sen bir matematik öğretmenisin. ${difficultyText} seviyesindeki bir öğrenci için ${mission.type === 'riddle' ? 'eğlenceli bir matematik bilmecesi' : 'uzay temalı bir matematik hikaye problemi'} oluştur. 
-            JSON formatında cevap ver. 4 şık olsun. Cevap 'answer' alanında şıkkın kendisi (metin) olarak yer alsın.`;
+            const query = `${difficultyText} seviyesinde, ${mission.type === 'riddle' ? 'bir matematik bilmecesi' : 'uzay temalı hikayeli bir problem'} oluştur. 4 adet şık içersin.`;
 
             try {
-                state.questData = await fetchWithRetry(prompt);
+                state.questData = await fetchWithRetry(query);
                 state.status = 'quest';
             } catch (err) {
-                state.feedback = "Bağlantı hatası! Lütfen tekrar dene.";
+                console.error(err);
                 state.status = 'map';
+                state.feedback = { 
+                    type: 'error', 
+                    text: err.message.includes("403") ? "Kozmik Hata: API Anahtarı eksik! Lütfen anahtarınızı koda ekleyin." : "Bağlantı hatası, lütfen tekrar deneyin!" 
+                };
             }
             render();
         };
@@ -146,7 +164,7 @@
             const isCorrect = selected.toString().trim() === state.questData.answer.toString().trim();
 
             if (isCorrect) {
-                state.feedback = { type: 'success', text: "HARİKA! DOĞRU CEVAP 🚀" };
+                state.feedback = { type: 'success', text: "MÜKEMMEL! DOĞRU CEVAP 🚀" };
                 render();
                 setTimeout(() => {
                     const m = state.missions.find(mi => mi.id === state.activeMission.id);
@@ -176,7 +194,7 @@
 
         window.restartGame = () => location.reload();
 
-        // --- RENDER BİLEŞENLERİ ---
+        // --- RENDER SİSTEMİ ---
         function renderHUD() {
             return `
                 <header class="sticky top-0 z-40 glass border-b border-white/10 px-6 py-4 flex justify-between items-center shadow-2xl">
@@ -187,7 +205,7 @@
                         </div>
                         <div class="h-8 w-px bg-slate-700"></div>
                         <div>
-                            <span class="text-[10px] font-black text-pink-400 uppercase tracking-widest block mb-1">SEVİYE</span>
+                            <span class="text-[10px] font-black text-pink-400 uppercase tracking-widest block mb-1">DURUM</span>
                             <span class="text-xl font-black text-white">${state.currentLevel} / ${state.missions.length}</span>
                         </div>
                     </div>
@@ -232,11 +250,16 @@
 
             return `
                 <main class="flex-1 py-16 px-4 max-w-2xl mx-auto w-full">
-                    <div class="text-center mb-20">
+                    <div class="text-center mb-10">
                         <h1 class="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-indigo-300 italic tracking-tighter drop-shadow-lg">MATEMATİK GALAKSİSİ</h1>
-                        <p class="text-indigo-400 font-bold tracking-[0.4em] text-xs mt-2 uppercase">Bilmeceleri Çöz • Evreni Kurtar</p>
+                        <p class="text-indigo-400 font-bold tracking-[0.4em] text-xs mt-2 uppercase">Gezegenleri Keşfet • Soruları Çöz</p>
                     </div>
-                    <div class="relative">
+                    ${state.feedback && state.status === 'map' ? `
+                        <div class="mb-10 p-4 rounded-xl bg-pink-500/20 text-pink-400 border border-pink-500/30 text-center font-bold">
+                            ⚠️ ${state.feedback.text}
+                        </div>
+                    ` : ''}
+                    <div class="relative mt-20">
                         <div class="absolute inset-0 flex justify-center pointer-events-none">
                             <div class="w-1 h-full border-l-2 border-dashed border-white/10"></div>
                         </div>
@@ -252,7 +275,7 @@
                     <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-xl">
                         <div class="text-center space-y-6">
                             <div class="w-24 h-24 border-8 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto shadow-2xl"></div>
-                            <p class="text-2xl font-black tracking-widest text-indigo-300 animate-pulse">KOZMİK VERİLER ALINIYOR...</p>
+                            <p class="text-2xl font-black tracking-widest text-indigo-300 animate-pulse uppercase">Soru Hazırlanıyor...</p>
                         </div>
                     </div>
                 `;
@@ -268,23 +291,22 @@
                                 <span class="text-5xl">${state.activeMission.icon}</span>
                                 <div>
                                     <h2 class="text-2xl font-black text-white">${state.activeMission.title}</h2>
-                                    <p class="text-indigo-400 text-xs font-bold uppercase tracking-widest">Gezegen Görevi</p>
+                                    <p class="text-indigo-400 text-xs font-bold uppercase tracking-widest">Kozmik Görev</p>
                                 </div>
                             </div>
                             <button onclick="state.status='map'; render();" class="text-slate-500 hover:text-white transition-colors text-2xl">✕</button>
                         </div>
 
-                        <div class="bg-indigo-900/30 p-8 rounded-3xl border border-indigo-500/20 mb-8">
-                            <p class="text-xl font-medium text-indigo-500 mb-4 text-center">SORU:</p>
-                            <p class="text-2xl font-bold text-white leading-relaxed text-center italic">
+                        <div class="bg-indigo-900/30 p-8 rounded-3xl border border-indigo-500/20 mb-8 text-center">
+                            <p class="text-2xl font-bold text-white leading-relaxed italic">
                                 "${state.questData.question}"
                             </p>
                         </div>
 
                         <div class="grid grid-cols-1 gap-3 mb-8">
-                            ${state.questData.options.map(opt => `
+                            ${state.questData.options.map((opt, idx) => `
                                 <button onclick="checkAnswer('${opt}')" class="p-5 bg-slate-800/50 hover:bg-indigo-600 border border-slate-700 rounded-2xl text-lg font-bold transition-all hover:scale-[1.02] active:scale-95 text-left flex items-center">
-                                    <span class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center mr-4 text-xs">🚀</span>
+                                    <span class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center mr-4 text-xs font-black uppercase">${String.fromCharCode(65 + idx)}</span>
                                     ${opt}
                                 </button>
                             `).join('')}
@@ -302,16 +324,16 @@
 
         function renderFinished() {
             return `
-                <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 backdrop-blur-2xl p-6">
-                    <div class="text-center space-y-10 animate-float max-w-md w-full">
-                        <div class="text-9xl drop-shadow-[0_0_50px_rgba(250,204,21,0.5)]">🏆</div>
-                        <h2 class="text-6xl font-black text-white tracking-tighter leading-tight">GALAKSİ KRALI!</h2>
+                <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 backdrop-blur-2xl p-6 text-center">
+                    <div class="space-y-10 animate-float max-w-md w-full">
+                        <div class="text-9xl">🏆</div>
+                        <h2 class="text-6xl font-black text-white tracking-tighter uppercase leading-none">Harikasın!</h2>
                         <div class="glass p-10 rounded-[3.5rem] border-2 border-yellow-400/30">
-                            <p class="text-indigo-400 font-bold uppercase tracking-widest text-sm mb-2">TOPLAM PUAN</p>
+                            <p class="text-indigo-400 font-bold uppercase tracking-widest text-sm mb-2">Toplam Skoru</p>
                             <p class="text-8xl font-black text-yellow-400">⭐ ${state.score}</p>
                         </div>
-                        <button onclick="restartGame()" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-6 px-12 rounded-3xl text-3xl font-black shadow-2xl transition-all hover:brightness-110 active:scale-95">
-                            YENİDEN BAŞLA 🛸
+                        <button onclick="restartGame()" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-6 px-12 rounded-3xl text-3xl font-black shadow-2xl transition-all hover:scale-105 active:scale-95">
+                            YENİDEN BAŞLA 🚀
                         </button>
                     </div>
                 </div>
@@ -327,7 +349,6 @@
             }
         }
 
-        // --- BAŞLATMA VE YILDIZLAR ---
         function initStars() {
             const container = document.getElementById('stars-container');
             for (let i = 0; i < 150; i++) {
